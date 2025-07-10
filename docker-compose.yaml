@@ -1,0 +1,71 @@
+services:
+  # RabbitMQ消息队列服务
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"  # AMQP协议端口
+      - "15672:15672"  # 管理界面端口
+    volumes:
+      - ./rabbitmq_data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - app-network
+    # 添加健康检查，确保RabbitMQ启动完成
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]  # 检查RabbitMQ是否就绪
+      interval: 10s  # 每10秒检查一次
+      timeout: 5s    # 超时时间5秒
+      retries: 5     # 最多重试5次
+    restart: unless-stopped
+
+  # 触发器监听服务（将PostgreSQL通知转发到RabbitMQ）
+  postgres-listener:
+    build:
+      context: ./postgres-listener
+      dockerfile: Dockerfile
+    container_name: postgres-listener
+    environment:
+      DB_URL: "postgresql://postgres:difyai123456@192.168.163.132:5432/dify"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      QUEUE_NAME: "new_app_queue"
+      NOTIFICATION_CHANNEL: "new_app_channel"
+    volumes:
+      - ./postgres-listener:/app  # 挂载postgres-listener目录到容器内的/app目录
+    networks:
+      - app-network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy  # 等待RabbitMQ健康检查通过
+    restart: unless-stopped
+
+  # API Key创建服务
+  api-key-creator:
+    build:
+      context: ./api-key-creator
+      dockerfile: Dockerfile
+    container_name: api-key-creator
+    environment:
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      QUEUE_NAME: "new_app_queue"
+      LOGIN_URL: "http://192.168.163.132/console/api/login"
+      API_KEY_URL: "http://192.168.163.132/console/api/apps/{app_id}/api-keys"
+      EMAIL: "yangzhen8031@163.com"
+      PASSWORD: "fyqx@2024"
+    volumes:
+      - ./api-key-creator:/app  # 挂载api-key-creator目录到容器内的/app目录
+    networks:
+      - app-network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy  # 等待RabbitMQ健康检查通过
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
